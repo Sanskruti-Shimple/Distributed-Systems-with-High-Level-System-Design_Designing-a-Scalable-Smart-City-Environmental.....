@@ -1,0 +1,8 @@
+location              = "centralus"
+monthly_budget_usd    = 150
+budget_contact_emails = ["replace-with-your-email@example.com"]
+sql_admin_login       = "cityadmin"
+sql_admin_password    = "replace-with-a-strong-unique-password"
+sql_entra_admin_login = "replace-with-your-entra-upn"
+sql_entra_admin_object_id = "replace-with-your-entra-object-id"
+sql_allowed_ip_ranges = []

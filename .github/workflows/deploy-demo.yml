@@ -1,0 +1,67 @@
+name: Deploy short-lived Azure demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Select a protected GitHub Environment
+        required: true
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: Immutable image tag to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
+      - uses: azure/docker-login@v2
+        with:
+          login-server: ${{ vars.ACR_LOGIN_SERVER }}
+      - name: Build and push images
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in iot-ingestion stream-processor rest-api dashboard; do
+            image="$ACR_LOGIN_SERVER/$service:$IMAGE_TAG"
+            docker build -f "services/$service/Dockerfile" -t "$image" .
+            docker push "$image"
+          done
+      - uses: azure/setup-helm@v4
+      - name: Deploy chart
+        run: >-
+          helm upgrade --install smart-city deploy/helm/smart-city
+          --namespace smart-city --create-namespace
+          --set-string image.registry=${{ vars.ACR_LOGIN_SERVER }}
+          --set-string image.tag=${{ inputs.image_tag }}
+          --set-string eventHub.bootstrapServers=${{ vars.EVENTHUB_BOOTSTRAP_SERVERS }}
+          --set-string azure.sqlServer=${{ vars.AZURE_SQL_SERVER }}
+          --set-string azure.adxClusterUri=${{ vars.ADX_CLUSTER_URI }}
+          --set-string azure.adxIngestUri=${{ vars.ADX_INGEST_URI }}
+          --set-string azure.tenantId=${{ vars.AZURE_TENANT_ID }}
+          --set-string azure.workloadIdentityClientId=${{ vars.WORKLOAD_IDENTITY_CLIENT_ID }}
+          --set-string keyVault.name=${{ vars.KEY_VAULT_NAME }}
+          --set-string keyVault.tenantId=${{ vars.AZURE_TENANT_ID }}
+          --set-string keyVault.workloadIdentityClientId=${{ vars.WORKLOAD_IDENTITY_CLIENT_ID }}
+      - name: Verify rollout
+        run: kubectl rollout status deployment --namespace smart-city --timeout=5m

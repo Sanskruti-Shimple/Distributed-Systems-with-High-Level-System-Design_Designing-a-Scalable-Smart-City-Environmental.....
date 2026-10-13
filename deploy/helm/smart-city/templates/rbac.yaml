@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: smart-city-readiness
+  namespace: smart-city
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: smart-city-readiness
+  namespace: smart-city
+subjects:
+  - kind: ServiceAccount
+    name: smart-city
+    namespace: smart-city
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: smart-city-readiness

@@ -1,0 +1,48 @@
+namespace: smart-city
+image:
+  registry: REPLACE_WITH_ACR.azurecr.io
+  tag: latest
+replicas:
+  ingestion: 2
+  processor: 1
+  api: 2
+  dashboard: 2
+resources:
+  ingestion:
+    {
+      requests: { cpu: 100m, memory: 128Mi },
+      limits: { cpu: 500m, memory: 512Mi },
+    }
+  processor:
+    { requests: { cpu: 250m, memory: 256Mi }, limits: { cpu: 1, memory: 1Gi } }
+  api:
+    {
+      requests: { cpu: 100m, memory: 128Mi },
+      limits: { cpu: 500m, memory: 512Mi },
+    }
+  dashboard:
+    {
+      requests: { cpu: 50m, memory: 64Mi },
+      limits: { cpu: 250m, memory: 256Mi },
+    }
+eventHub:
+  bootstrapServers: REPLACE_WITH_NAMESPACE.servicebus.windows.net:9093
+  topic: sensor-readings
+  saslUsername: $ConnectionString
+azure:
+  sqlServer: REPLACE_WITH_SQL_SERVER.database.windows.net
+  sqlDatabase: smartcity
+  adxClusterUri: https://REPLACE_WITH_ADX_CLUSTER.kusto.windows.net
+  adxIngestUri: https://ingest-REPLACE_WITH_ADX_CLUSTER.kusto.windows.net
+  adxDatabase: smartcity
+  tenantId: REPLACE_WITH_TENANT_ID
+  workloadIdentityClientId: REPLACE_WITH_WORKLOAD_IDENTITY_CLIENT_ID
+keyVault:
+  name: REPLACE_WITH_KEY_VAULT_NAME
+  tenantId: REPLACE_WITH_TENANT_ID
+  workloadIdentityClientId: REPLACE_WITH_WORKLOAD_IDENTITY_CLIENT_ID
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70

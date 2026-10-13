@@ -1,0 +1,22 @@
+.create-merge table SensorReadings (
+    DeviceId: string,
+    EventId: string,
+    ObservedAt: datetime,
+    Location: string,
+    Metric: string,
+    Value: real,
+    Unit: string
+)
+
+.create-or-alter table SensorReadings ingestion json mapping 'SensorReadingsMapping' '[
+  {"column":"DeviceId","path":"$.DeviceId","datatype":"string"},
+  {"column":"EventId","path":"$.EventId","datatype":"string"},
+  {"column":"ObservedAt","path":"$.ObservedAt","datatype":"datetime"},
+  {"column":"Location","path":"$.Location","datatype":"string"},
+  {"column":"Metric","path":"$.Metric","datatype":"string"},
+  {"column":"Value","path":"$.Value","datatype":"real"},
+  {"column":"Unit","path":"$.Unit","datatype":"string"}
+]'
+
+.alter-merge table SensorReadings policy retention softdelete = 7d
+.alter-merge table SensorReadings policy caching hot = 1d

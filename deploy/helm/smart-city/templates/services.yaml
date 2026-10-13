@@ -1,0 +1,155 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: smart-city
+  namespace: {{ .Values.namespace }}
+  annotations:
+    azure.workload.identity/client-id: {{ .Values.azure.workloadIdentityClientId | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smart-city-config
+  namespace: {{ .Values.namespace }}
+data:
+  KAFKA_BOOTSTRAP_SERVERS: {{ .Values.eventHub.bootstrapServers | quote }}
+  KAFKA_TOPIC: {{ .Values.eventHub.topic | quote }}
+  KAFKA_SASL_USERNAME: {{ .Values.eventHub.saslUsername | quote }}
+  AZURE_SQL_SERVER: {{ .Values.azure.sqlServer | quote }}
+  AZURE_SQL_DATABASE: {{ .Values.azure.sqlDatabase | quote }}
+  ADX_CLUSTER_URI: {{ .Values.azure.adxClusterUri | quote }}
+  ADX_INGEST_URI: {{ .Values.azure.adxIngestUri | quote }}
+  ADX_DATABASE: {{ .Values.azure.adxDatabase | quote }}
+  AZURE_TENANT_ID: {{ .Values.azure.tenantId | quote }}
+  AZURE_CLIENT_ID: {{ .Values.azure.workloadIdentityClientId | quote }}
+{{- $services := list
+  (dict "name" "ingestion" "port" 8000 "image" "iot-ingestion" "resources" .Values.resources.ingestion "probe" "/health/live")
+  (dict "name" "processor" "port" 8081 "image" "stream-processor" "resources" .Values.resources.processor "probe" "")
+  (dict "name" "api" "port" 8001 "image" "rest-api" "resources" .Values.resources.api "probe" "/health/live")
+  (dict "name" "dashboard" "port" 8080 "image" "dashboard" "resources" .Values.resources.dashboard "probe" "/")
+}}
+{{- range $service := $services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $service.name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  replicas: {{ index $.Values.replicas $service.name }}
+  selector:
+    matchLabels:
+      app: {{ $service.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $service.name }}
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: smart-city
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ $service.name }}
+          image: "{{ $.Values.image.registry }}/{{ $service.image }}:{{ $.Values.image.tag }}"
+          {{- if ne $service.name "processor" }}
+          ports:
+            - name: http
+              containerPort: {{ $service.port }}
+          {{- end }}
+          {{- if $service.probe }}
+          livenessProbe:
+            httpGet:
+              path: {{ $service.probe }}
+              port: http
+          readinessProbe:
+            httpGet:
+              path: {{ $service.probe }}
+              port: http
+          {{- end }}
+          resources:
+            {{- toYaml $service.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - configMapRef:
+                name: smart-city-config
+          {{- if eq $service.name "ingestion" }}
+          env:
+            - name: DEVICE_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: device-token
+                  key: device-token
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: eventhub-producer
+                  key: connection-string
+          volumeMounts:
+            - name: eventhub-secret
+              mountPath: /mnt/secrets-store
+              readOnly: true
+            - name: device-secret
+              mountPath: /mnt/device-secrets
+              readOnly: true
+          {{- else if eq $service.name "processor" }}
+          env:
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: eventhub-consumer
+                  key: connection-string
+          volumeMounts:
+            - name: eventhub-secret
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          {{- end }}
+      {{- if or (eq $service.name "ingestion") (eq $service.name "processor") }}
+      volumes:
+        - name: eventhub-secret
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ if eq $service.name "ingestion" }}eventhub-producer{{ else }}eventhub-consumer{{ end }}
+        {{- if eq $service.name "ingestion" }}
+        - name: device-secret
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: device-token
+        {{- end }}
+      {{- end }}
+{{- if ne $service.name "processor" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $service.name }}
+  namespace: {{ $.Values.namespace }}
+spec:
+  type: {{ if eq $service.name "dashboard" }}LoadBalancer{{ else }}ClusterIP{{ end }}
+  selector:
+    app: {{ $service.name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}
+{{- end }}

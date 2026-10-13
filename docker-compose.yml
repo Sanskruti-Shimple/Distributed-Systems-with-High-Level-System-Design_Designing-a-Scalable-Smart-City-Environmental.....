@@ -1,0 +1,86 @@
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.3.10
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/iot-ingestion/Dockerfile
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      DEVICE_TOKENS: ${DEVICE_TOKENS:-local-demo-token}
+    ports:
+      - "8000:8000"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  processor:
+    build:
+      context: .
+      dockerfile: services/stream-processor/Dockerfile
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      SQLITE_PATH: /data/smartcity.db
+    volumes:
+      - city-data:/data
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: services/rest-api/Dockerfile
+    environment:
+      SQLITE_PATH: /data/smartcity.db
+    volumes:
+      - city-data:/data
+    ports:
+      - "8001:8001"
+    depends_on:
+      - processor
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: services/dashboard/Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_INGESTION_BASE_URL: /ingestion
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+      - ingestion
+
+  simulator:
+    build:
+      context: .
+      dockerfile: tools/sensor-simulator/Dockerfile
+    environment:
+      SIMULATOR_DEVICE_TOKEN: ${DEVICE_TOKENS:-local-demo-token}
+    depends_on:
+      - ingestion
+      - processor
+
+volumes:
+  city-data:
